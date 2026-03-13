@@ -50,6 +50,10 @@ inputs:
     description: 'CostGuard API URL (override for custom deployments)'
     required: false
     default: 'https://4tm9xj5nv0.execute-api.us-east-1.amazonaws.com/rnd'
+  tag:
+    description: 'Tag to identify this comment (e.g. production, staging). Each tag gets its own PR comment.'
+    required: false
+    default: ''
   extra-args:
     description: 'Extra CLI flags (advanced escape hatch)'
     required: false
@@ -91,6 +95,7 @@ runs:
         [ "${{ inputs.skip-guardrails }}" = "true" ] && OPTS="$OPTS --skip-guardrails"
         [ "${{ inputs.auto-approve }}" = "true" ] && OPTS="$OPTS --auto-approve"
         [ "${{ inputs.post-comment }}" = "true" ] && OPTS="$OPTS --post-comment"
+        [ -n "${{ inputs.tag }}" ] && OPTS="$OPTS --tag ${{ inputs.tag }}"
 
         BUDGET_FLAG=""
         if [ -n "${{ inputs.budget-code }}" ]; then

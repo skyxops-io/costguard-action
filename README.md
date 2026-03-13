@@ -163,7 +163,7 @@ A budget code connects your deployment to a spending limit you've set up in SKYX
 
 ### Setup
 
-1. Go to [app.skyxops.com](https://app.skyxops.com) → **Budgets**
+1. Go to [app.skyxops.io](https://app.skyxops.io) → **Budgets**
 2. Create or select a budget for your team/project
 3. Copy the **budget code**
 4. Add it as a repository secret: `COSTGUARD_BUDGET_CODE`
