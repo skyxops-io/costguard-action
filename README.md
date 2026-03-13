@@ -159,44 +159,30 @@ The comment updates automatically on each push — no duplicates.
 
 ## Budget Codes
 
-A **budget code** links your infrastructure deployment to an organizational budget in CostGuard. When provided, the API checks whether the proposed cost fits within the budget's remaining headroom and returns a decision accordingly.
+A budget code connects your deployment to a spending limit you've set up in SKYXOPS. CostGuard checks if the new infrastructure cost fits within that budget before allowing the merge.
 
-### Where to find your budget code
+### Setup
 
-1. Log in to the **SKYXOPS web app** at [app.skyxops.com](https://app.skyxops.com)
-2. Navigate to **Budgets** → select your budget
-3. Copy the **budget code** shown in the budget details
+1. Go to [app.skyxops.com](https://app.skyxops.com) → **Budgets**
+2. Create or select a budget for your team/project
+3. Copy the **budget code**
+4. Add it as a repository secret: `COSTGUARD_BUDGET_CODE`
 
-### How CostGuard uses it
+### What happens
 
-When you pass `--budget-code` (or set `COSTGUARD_BUDGET_CODE`), the API:
+```
+PR opened → CostGuard checks cost against your budget
+                │
+                ├─ Within budget     → ALLOW  (pipeline passes)
+                ├─ Near the limit    → WARN   (pipeline passes, review recommended)
+                └─ Over budget       → BLOCK  (pipeline fails, merge blocked)
+```
 
-1. Looks up the budget by code
-2. Checks **available headroom** — how much budget remains for the current period
-3. Compares the proposed deployment cost against headroom
-4. Returns a decision:
+Your PR comment will show the budget name, how much has been used, and how much is left — so the team knows exactly where they stand before merging.
 
-| Scenario | Decision | Exit Code | Pipeline |
-|----------|----------|:---------:|----------|
-| Cost fits within budget | **ALLOW** | 0 | Passes |
-| Cost is close to budget limit | **WARN** | 2 | Passes (review recommended) |
-| Cost exceeds budget headroom | **BLOCK** | 1 | Fails (merge blocked) |
-| Budget code not found | **BLOCK** | 1 | Fails (use `--auto-approve` to override) |
+### No budget? No problem
 
-### PR comment shows
-
-When a budget code is provided, the PR comment includes a **Budget** section with:
-- Budget name and usage bar (e.g., `[████████████░░░░░░░░] 60% used`)
-- Monthly limit, current usage, projected usage, and remaining headroom
-- Consumption percentage after this deployment
-
-### Without a budget code
-
-| Mode | How | What you get |
-|------|-----|-------------|
-| **Pricing only** | Set `skip-budget: "true"` | Cost breakdown only — no budget validation, always passes |
-| **Auto-approve** | Set `auto-approve: "true"` | Full analysis, but passes even if no budget is found |
-| **Omit entirely** | Don't set `budget-code` | API blocks by default — set one of the above to override |
+You can use CostGuard without a budget code — just set `skip-budget: "true"` to get cost visibility without enforcement. Great for early-stage projects or sandbox environments.
 
 ---
 
