@@ -163,7 +163,7 @@ A **budget code** links your infrastructure deployment to an organizational budg
 
 ### Where to find your budget code
 
-1. Log in to the **CostGuard Dashboard** at [costguard.dev](https://costguard.dev)
+1. Log in to the **SKYXOPS web app** at [app.skyxops.com](https://app.skyxops.com)
 2. Navigate to **Budgets** → select your budget
 3. Copy the **budget code** shown in the budget details
 
