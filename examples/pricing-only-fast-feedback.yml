@@ -1,0 +1,77 @@
+# ──────────────────────────────────────────────────────────────
+# Pricing-Only Mode — Fast Developer Feedback
+# ──────────────────────────────────────────────────────────────
+#
+# Scenario: Development team wants quick cost estimates on every PR
+#           without budget enforcement or AI analysis. Runs in ~5 seconds.
+#           Useful for early-stage projects or sandbox environments.
+#
+# Pipeline: checkout → terraform plan → pricing review (no budget gate)
+#
+# Features:
+#   - Skip budget, narrative, and guardrails for fastest response
+#   - Non-blocking — always passes, just provides cost visibility
+#   - Minimal secrets — only COSTGUARD_API_KEY needed
+
+name: "Cost Estimate: Quick Pricing"
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "terraform/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  terraform-plan:
+    name: "Terraform Plan"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Plan
+        run: |
+          terraform init
+          terraform plan -out=tfplan
+          terraform show -json tfplan > plan.json
+
+      - name: Upload Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: terraform/plan.json
+
+  cost-estimate:
+    name: "CostGuard: Pricing Estimate"
+    needs: terraform-plan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan
+
+      - name: Run CostGuard (pricing only)
+        uses: skyxops-io/costguard-action@v1
+        with:
+          plan-path: plan.json
+          api-key: ${{ secrets.COSTGUARD_API_KEY }}
+          skip-budget: "true"
+          skip-narrative: "true"
+          skip-guardrails: "true"

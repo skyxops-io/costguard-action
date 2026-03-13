@@ -1,0 +1,119 @@
+# ──────────────────────────────────────────────────────────────
+# AWS CloudFormation — Change Set Cost Review
+# ──────────────────────────────────────────────────────────────
+#
+# Scenario: Data engineering team deploys EMR clusters, S3 buckets,
+#           and Glue jobs via CloudFormation. CostGuard reviews the
+#           change set before stack update goes through.
+#
+# Pipeline: checkout → create change set → cost review → execute change set
+#
+# Secrets needed:
+#   COSTGUARD_API_KEY
+#   COSTGUARD_BUDGET_CODE — e.g. CS-FY2026-DATA-ENG-M03
+#   AWS_ROLE_ARN
+
+name: "CloudFormation: Data Pipeline Deploy"
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "cloudformation/**"
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  STACK_NAME: data-pipeline-production
+  AWS_REGION: us-east-1
+  TEMPLATE_FILE: cloudformation/data-pipeline.yaml
+
+jobs:
+  create-changeset:
+    name: "Create Change Set"
+    runs-on: ubuntu-latest
+    outputs:
+      changeset_name: ${{ steps.changeset.outputs.name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create & Describe Change Set
+        id: changeset
+        run: |
+          CHANGESET_NAME="costguard-review-${{ github.run_id }}"
+          echo "name=$CHANGESET_NAME" >> $GITHUB_OUTPUT
+
+          aws cloudformation create-change-set \
+            --stack-name ${{ env.STACK_NAME }} \
+            --template-body file://${{ env.TEMPLATE_FILE }} \
+            --change-set-name "$CHANGESET_NAME" \
+            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+            --parameters \
+              ParameterKey=Environment,ParameterValue=production \
+              ParameterKey=ClusterSize,ParameterValue=r6g.2xlarge
+
+          echo "Waiting for change set to complete..."
+          aws cloudformation wait change-set-create-complete \
+            --stack-name ${{ env.STACK_NAME }} \
+            --change-set-name "$CHANGESET_NAME"
+
+          aws cloudformation describe-change-set \
+            --stack-name ${{ env.STACK_NAME }} \
+            --change-set-name "$CHANGESET_NAME" \
+            > changeset.json
+
+      - name: Upload Change Set
+        uses: actions/upload-artifact@v4
+        with:
+          name: cfn-changeset
+          path: changeset.json
+          retention-days: 5
+
+  cost-review:
+    name: "CostGuard: Cost Review"
+    needs: create-changeset
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Change Set
+        uses: actions/download-artifact@v4
+        with:
+          name: cfn-changeset
+
+      - name: Run CostGuard
+        uses: skyxops-io/costguard-action@v1
+        with:
+          plan-path: changeset.json
+          api-key: ${{ secrets.COSTGUARD_API_KEY }}
+          budget-code: ${{ secrets.COSTGUARD_BUDGET_CODE }}
+
+  deploy:
+    name: "Execute Change Set"
+    needs: [create-changeset, cost-review]
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+    environment: production
+    steps:
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Execute Change Set
+        run: |
+          aws cloudformation execute-change-set \
+            --stack-name ${{ env.STACK_NAME }} \
+            --change-set-name "${{ needs.create-changeset.outputs.changeset_name }}"
+
+          aws cloudformation wait stack-update-complete \
+            --stack-name ${{ env.STACK_NAME }}

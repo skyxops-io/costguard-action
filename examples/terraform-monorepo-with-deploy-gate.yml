@@ -1,0 +1,144 @@
+# ──────────────────────────────────────────────────────────────
+# Terraform Monorepo — Cost Gate with Manual Approval
+# ──────────────────────────────────────────────────────────────
+#
+# Scenario: Platform engineering team manages networking, compute,
+#           and database modules in a monorepo. CostGuard gates
+#           the deploy with a manual approval step for high-cost changes.
+#
+# Pipeline: plan → cost review → manual approval → deploy
+#
+# Features:
+#   - Path-based triggers (only runs when relevant module changes)
+#   - GitHub Environment with required reviewers for production deploy
+#   - CostGuard outputs used for step summary and Slack notification
+#
+# Secrets needed:
+#   COSTGUARD_API_KEY
+#   COSTGUARD_BUDGET_CODE
+#   AWS_ROLE_ARN
+#   SLACK_WEBHOOK_URL (optional)
+
+name: "Platform: Infrastructure Deploy"
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "modules/**"
+      - "environments/production/**"
+      - "!**/*.md"
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  terraform-plan:
+    name: "Terraform Plan"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: environments/production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+          terraform_wrapper: false
+
+      - name: Terraform Init & Plan
+        run: |
+          terraform init -backend-config=backend.hcl
+          terraform plan -out=tfplan -detailed-exitcode || true
+          terraform show -json tfplan > plan.json
+
+      - name: Upload Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: environments/production/plan.json
+          retention-days: 5
+
+  cost-review:
+    name: "CostGuard: Cost & Budget Review"
+    needs: terraform-plan
+    runs-on: ubuntu-latest
+    outputs:
+      decision: ${{ steps.costguard.outputs.decision }}
+      monthly_cost: ${{ steps.costguard.outputs.monthly-cost }}
+    steps:
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan
+
+      - name: Run CostGuard
+        id: costguard
+        uses: skyxops-io/costguard-action@v1
+        with:
+          plan-path: plan.json
+          api-key: ${{ secrets.COSTGUARD_API_KEY }}
+          budget-code: ${{ secrets.COSTGUARD_BUDGET_CODE }}
+
+      - name: Write Job Summary
+        if: always()
+        run: |
+          echo "## CostGuard Review" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Decision | **${{ steps.costguard.outputs.decision }}** |" >> $GITHUB_STEP_SUMMARY
+          echo "| Monthly Cost | **\$${{ steps.costguard.outputs.monthly-cost }}** |" >> $GITHUB_STEP_SUMMARY
+          echo "| PR | #${{ github.event.pull_request.number }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Author | @${{ github.event.pull_request.user.login }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify Slack (optional)
+        if: always() && env.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -s -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            --data "{
+              \"text\": \"CostGuard: *${{ steps.costguard.outputs.decision }}* — \$${{ steps.costguard.outputs.monthly-cost }}/mo for PR #${{ github.event.pull_request.number }} by ${{ github.event.pull_request.user.login }}\"
+            }"
+
+  deploy:
+    name: "Terraform Apply"
+    needs: cost-review
+    if: needs.cost-review.outputs.decision != 'BLOCK'
+    runs-on: ubuntu-latest
+    environment: production  # Requires manual approval via GitHub Environment
+    defaults:
+      run:
+        working-directory: environments/production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+
+      - name: Terraform Apply
+        run: |
+          terraform init -backend-config=backend.hcl
+          terraform apply -auto-approve

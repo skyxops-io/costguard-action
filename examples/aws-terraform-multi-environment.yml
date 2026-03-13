@@ -1,0 +1,105 @@
+# ──────────────────────────────────────────────────────────────
+# AWS Terraform — Multi-Environment with Matrix Strategy
+# ──────────────────────────────────────────────────────────────
+#
+# Scenario: Engineering org manages staging + production in separate
+#           AWS accounts. Each environment has its own Terraform root,
+#           budget code, and OIDC role. CostGuard reviews both in parallel.
+#
+# Pipeline: checkout → plan (staging + prod) → cost review (staging + prod) → deploy
+#
+# Secrets needed (per environment):
+#   COSTGUARD_API_KEY
+#   AWS_ROLE_ARN_STAGING / AWS_ROLE_ARN_PRODUCTION
+#   BUDGET_CODE_STAGING / BUDGET_CODE_PRODUCTION
+
+name: "Infrastructure: Multi-Environment Deploy"
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "terraform/**"
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  terraform-plan:
+    name: "Plan: ${{ matrix.environment }}"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - environment: staging
+            aws_region: us-west-2
+            tf_root: terraform/environments/staging
+            role_secret: AWS_ROLE_ARN_STAGING
+          - environment: production
+            aws_region: us-east-1
+            tf_root: terraform/environments/production
+            role_secret: AWS_ROLE_ARN_PRODUCTION
+    defaults:
+      run:
+        working-directory: ${{ matrix.tf_root }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[matrix.role_secret] }}
+          aws-region: ${{ matrix.aws_region }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+
+      - name: Terraform Init & Plan
+        run: |
+          terraform init -backend-config=backend.hcl
+          terraform plan -out=tfplan -var-file=${{ matrix.environment }}.tfvars
+          terraform show -json tfplan > plan.json
+
+      - name: Upload Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: plan-${{ matrix.environment }}
+          path: ${{ matrix.tf_root }}/plan.json
+          retention-days: 5
+
+  cost-review:
+    name: "CostGuard: ${{ matrix.environment }}"
+    needs: terraform-plan
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - environment: staging
+            budget_secret: BUDGET_CODE_STAGING
+          - environment: production
+            budget_secret: BUDGET_CODE_PRODUCTION
+    steps:
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: plan-${{ matrix.environment }}
+
+      - name: Run CostGuard
+        uses: skyxops-io/costguard-action@v1
+        id: costguard
+        with:
+          plan-path: plan.json
+          api-key: ${{ secrets.COSTGUARD_API_KEY }}
+          budget-code: ${{ secrets[matrix.budget_secret] }}
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### CostGuard — ${{ matrix.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Decision: **${{ steps.costguard.outputs.decision }}**" >> $GITHUB_STEP_SUMMARY
+          echo "- Monthly Cost: **${{ steps.costguard.outputs.monthly-cost }}**" >> $GITHUB_STEP_SUMMARY

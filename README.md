@@ -118,31 +118,15 @@ The comment updates automatically on each push — no duplicates.
 
 ## Examples
 
-**CloudFormation:**
-```yaml
-- uses: skyxops-io/costguard-action@v1
-  with:
-    plan-path: changeset.json
-    api-key: ${{ secrets.COSTGUARD_API_KEY }}
-```
+Production-ready workflows in the [`examples/`](./examples/) folder:
 
-**Pricing only (skip budget):**
-```yaml
-- uses: skyxops-io/costguard-action@v1
-  with:
-    plan-path: plan.json
-    api-key: ${{ secrets.COSTGUARD_API_KEY }}
-    skip-budget: 'true'
-```
-
-**Fast mode (skip AI):**
-```yaml
-- uses: skyxops-io/costguard-action@v1
-  with:
-    plan-path: plan.json
-    api-key: ${{ secrets.COSTGUARD_API_KEY }}
-    skip-narrative: 'true'
-```
+| Example | Scenario |
+|---------|----------|
+| [AWS Terraform — Single Account](./examples/aws-terraform-single-account.yml) | OIDC auth, plan → cost review → deploy |
+| [AWS Terraform — Multi-Environment](./examples/aws-terraform-multi-environment.yml) | Matrix strategy for staging + production with separate budgets |
+| [AWS CloudFormation — Stack Deploy](./examples/aws-cloudformation-stack.yml) | Change set creation, cost review, and stack update |
+| [Terraform Monorepo — Deploy Gate](./examples/terraform-monorepo-with-deploy-gate.yml) | Path-based triggers, manual approval, Slack notification |
+| [Pricing Only — Fast Feedback](./examples/pricing-only-fast-feedback.yml) | Quick cost estimates without budget enforcement (~5s) |
 
 ## Exit Codes
 

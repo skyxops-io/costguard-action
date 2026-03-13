@@ -1,0 +1,81 @@
+# ──────────────────────────────────────────────────────────────
+# AWS Terraform — Single Account Deployment
+# ──────────────────────────────────────────────────────────────
+#
+# Scenario: Platform team deploys EC2, RDS, VPC resources to a
+#           single AWS account using OIDC (no long-lived keys).
+#
+# Pipeline: checkout → terraform plan → cost review → deploy
+#
+# Secrets needed:
+#   COSTGUARD_API_KEY    — CostGuard API key
+#   COSTGUARD_BUDGET_CODE — e.g. CS-FY2026-PLATFORM-M03
+#   AWS_ROLE_ARN         — IAM role for OIDC (arn:aws:iam::role/...)
+
+name: "Infrastructure: Plan & Cost Review"
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/infrastructure.yml"
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  terraform-plan:
+    name: "Terraform Plan"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform/environments/production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+
+      - name: Terraform Init
+        run: terraform init -backend-config=backend.hcl
+
+      - name: Terraform Plan
+        run: |
+          terraform plan -out=tfplan -detailed-exitcode
+          terraform show -json tfplan > plan.json
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-production
+          path: terraform/environments/production/plan.json
+          retention-days: 5
+
+  cost-review:
+    name: "CostGuard: Cost Review"
+    needs: terraform-plan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-production
+
+      - name: Run CostGuard
+        uses: skyxops-io/costguard-action@v1
+        with:
+          plan-path: plan.json
+          api-key: ${{ secrets.COSTGUARD_API_KEY }}
+          budget-code: ${{ secrets.COSTGUARD_BUDGET_CODE }}
