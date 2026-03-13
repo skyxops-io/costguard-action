@@ -161,23 +161,6 @@ The comment updates automatically on each push — no duplicates.
 
 A **budget code** links your infrastructure deployment to an organizational budget in CostGuard. When provided, the API checks whether the proposed cost fits within the budget's remaining headroom and returns a decision accordingly.
 
-### Format
-
-Budget codes follow the pattern: `CS-FY{year}-BU{unit}-M{month}`
-
-```
-CS-FY2026-M01          # Company-wide budget, January
-CS-FY2026-BU105-M03    # Business unit 105, March
-CS-FY2026-BU108-M01    # Business unit 108, January
-```
-
-| Segment | Meaning | Example |
-|---------|---------|---------|
-| `CS` | CostGuard prefix | Always `CS` |
-| `FY2026` | Fiscal year | `FY2025`, `FY2026` |
-| `BU105` | Business unit (optional) | Omit for company-wide budget |
-| `M03` | Month | `M01` through `M12` |
-
 ### Where to find your budget code
 
 1. Log in to the **CostGuard Dashboard** at [costguard.dev](https://costguard.dev)
