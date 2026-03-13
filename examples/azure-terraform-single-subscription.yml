@@ -1,20 +1,27 @@
 # ──────────────────────────────────────────────────────────────
-# AWS Terraform — Single Account Deployment
+# Azure Terraform — Single Subscription Deployment
 # ──────────────────────────────────────────────────────────────
 #
-# Scenario: Platform team deploys EC2, RDS, VPC resources to a
-#           single AWS account using OIDC (no long-lived keys).
+# Scenario: Platform team deploys AKS clusters, Azure SQL databases,
+#           and VNets to a single Azure subscription using OIDC
+#           federated credentials (no client secrets).
 #
 # Pipeline:
 #   On PR:    checkout → terraform plan → CostGuard cost review
 #   On merge: checkout → terraform plan → terraform apply
 #
+# Prerequisites:
+#   1. App registration with federated credential for GitHub Actions
+#   2. Role assignment (Contributor) on target subscription
+#
 # Secrets needed:
-#   COSTGUARD_API_KEY     — CostGuard API key
-#   COSTGUARD_BUDGET_CODE — Budget code from CostGuard dashboard
-#   AWS_ROLE_ARN          — IAM role for OIDC (arn:aws:iam::role/...)
+#   COSTGUARD_API_KEY        — CostGuard API key
+#   COSTGUARD_BUDGET_CODE    — Budget code from CostGuard dashboard
+#   AZURE_CLIENT_ID          — App registration (service principal) client ID
+#   AZURE_TENANT_ID          — Azure AD tenant ID
+#   AZURE_SUBSCRIPTION_ID    — Target subscription ID
 
-name: "Infrastructure: Plan, Review & Deploy"
+name: "Infrastructure: Azure Plan, Review & Deploy"
 
 on:
   pull_request:
@@ -33,7 +40,7 @@ permissions:
 
 env:
   TF_ROOT: terraform/environments/production
-  AWS_REGION: us-east-1
+  ARM_USE_OIDC: true
 
 jobs:
   terraform-plan:
@@ -42,15 +49,20 @@ jobs:
     defaults:
       run:
         working-directory: ${{ env.TF_ROOT }}
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -99,15 +111,20 @@ jobs:
     defaults:
       run:
         working-directory: ${{ env.TF_ROOT }}
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3

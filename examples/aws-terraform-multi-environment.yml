@@ -4,9 +4,13 @@
 #
 # Scenario: Engineering org manages staging + production in separate
 #           AWS accounts. Each environment has its own Terraform root,
-#           budget code, and OIDC role. CostGuard reviews both in parallel.
+#           budget code, and OIDC role. CostGuard reviews both in
+#           parallel on PR. Deploy promotes staging → production
+#           after merge.
 #
-# Pipeline: checkout → plan (staging + prod) → cost review (staging + prod) → deploy
+# Pipeline:
+#   On PR:    plan (staging + prod matrix) → CostGuard review (matrix)
+#   On merge: plan (staging + prod matrix) → deploy staging → deploy production
 #
 # Secrets needed (per environment):
 #   COSTGUARD_API_KEY
@@ -17,6 +21,10 @@ name: "Infrastructure: Multi-Environment Deploy"
 
 on:
   pull_request:
+    branches: [main]
+    paths:
+      - "terraform/**"
+  push:
     branches: [main]
     paths:
       - "terraform/**"
@@ -75,6 +83,7 @@ jobs:
   cost-review:
     name: "CostGuard: ${{ matrix.environment }}"
     needs: terraform-plan
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -102,4 +111,62 @@ jobs:
         run: |
           echo "### CostGuard — ${{ matrix.environment }}" >> $GITHUB_STEP_SUMMARY
           echo "- Decision: **${{ steps.costguard.outputs.decision }}**" >> $GITHUB_STEP_SUMMARY
-          echo "- Monthly Cost: **${{ steps.costguard.outputs.monthly-cost }}**" >> $GITHUB_STEP_SUMMARY
+          echo "- Monthly Cost: **\$${{ steps.costguard.outputs.monthly-cost }}**" >> $GITHUB_STEP_SUMMARY
+
+  deploy-staging:
+    name: "Deploy: Staging"
+    needs: terraform-plan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    defaults:
+      run:
+        working-directory: terraform/environments/staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_STAGING }}
+          aws-region: us-west-2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+
+      - name: Terraform Apply
+        run: |
+          terraform init -backend-config=backend.hcl
+          terraform apply -auto-approve -var-file=staging.tfvars
+
+  deploy-production:
+    name: "Deploy: Production"
+    needs: deploy-staging
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production  # Requires manual approval via GitHub Environment
+    defaults:
+      run:
+        working-directory: terraform/environments/production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_PRODUCTION }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+
+      - name: Terraform Apply
+        run: |
+          terraform init -backend-config=backend.hcl
+          terraform apply -auto-approve -var-file=production.tfvars

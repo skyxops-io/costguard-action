@@ -1,20 +1,22 @@
 # ──────────────────────────────────────────────────────────────
-# AWS Terraform — Single Account Deployment
+# GCP Terraform — Single Project Deployment
 # ──────────────────────────────────────────────────────────────
 #
-# Scenario: Platform team deploys EC2, RDS, VPC resources to a
-#           single AWS account using OIDC (no long-lived keys).
+# Scenario: Platform team deploys GKE clusters, Cloud SQL instances,
+#           and VPC networks to a single GCP project using Workload
+#           Identity Federation (no long-lived service account keys).
 #
 # Pipeline:
 #   On PR:    checkout → terraform plan → CostGuard cost review
 #   On merge: checkout → terraform plan → terraform apply
 #
 # Secrets needed:
-#   COSTGUARD_API_KEY     — CostGuard API key
-#   COSTGUARD_BUDGET_CODE — Budget code from CostGuard dashboard
-#   AWS_ROLE_ARN          — IAM role for OIDC (arn:aws:iam::role/...)
+#   COSTGUARD_API_KEY          — CostGuard API key
+#   COSTGUARD_BUDGET_CODE      — Budget code from CostGuard dashboard
+#   GCP_WORKLOAD_IDENTITY_PROVIDER — projects/<num>/locations/global/workloadIdentityPools/<pool>/providers/<provider>
+#   GCP_SERVICE_ACCOUNT        — terraform@<project>.iam.gserviceaccount.com
 
-name: "Infrastructure: Plan, Review & Deploy"
+name: "Infrastructure: GCP Plan, Review & Deploy"
 
 on:
   pull_request:
@@ -33,7 +35,8 @@ permissions:
 
 env:
   TF_ROOT: terraform/environments/production
-  AWS_REGION: us-east-1
+  GCP_PROJECT_ID: myorg-production-infra
+  GCP_REGION: us-central1
 
 jobs:
   terraform-plan:
@@ -46,11 +49,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Authenticate to Google Cloud (Workload Identity)
+        uses: google-github-actions/auth@v2
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -58,7 +61,7 @@ jobs:
           terraform_version: 1.7.5
 
       - name: Terraform Init
-        run: terraform init -backend-config=backend.hcl
+        run: terraform init
 
       - name: Terraform Plan
         run: |
@@ -103,11 +106,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Authenticate to Google Cloud (Workload Identity)
+        uses: google-github-actions/auth@v2
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -116,5 +119,5 @@ jobs:
 
       - name: Terraform Apply
         run: |
-          terraform init -backend-config=backend.hcl
+          terraform init
           terraform apply -auto-approve

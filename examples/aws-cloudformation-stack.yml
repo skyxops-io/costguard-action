@@ -4,9 +4,11 @@
 #
 # Scenario: Data engineering team deploys EMR clusters, S3 buckets,
 #           and Glue jobs via CloudFormation. CostGuard reviews the
-#           change set before stack update goes through.
+#           change set cost on PR. Stack update executes after merge.
 #
-# Pipeline: checkout → create change set → cost review → execute change set
+# Pipeline:
+#   On PR:    checkout → create change set → CostGuard cost review
+#   On merge: checkout → create change set → execute change set
 #
 # Secrets needed:
 #   COSTGUARD_API_KEY
@@ -17,6 +19,10 @@ name: "CloudFormation: Data Pipeline Deploy"
 
 on:
   pull_request:
+    branches: [main]
+    paths:
+      - "cloudformation/**"
+  push:
     branches: [main]
     paths:
       - "cloudformation/**"
@@ -82,6 +88,7 @@ jobs:
   cost-review:
     name: "CostGuard: Cost Review"
     needs: create-changeset
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Download Change Set
@@ -98,9 +105,9 @@ jobs:
 
   deploy:
     name: "Execute Change Set"
-    needs: [create-changeset, cost-review]
+    needs: create-changeset
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == true
     environment: production
     steps:
       - name: Configure AWS Credentials (OIDC)

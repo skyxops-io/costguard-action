@@ -4,14 +4,18 @@
 #
 # Scenario: Platform engineering team manages networking, compute,
 #           and database modules in a monorepo. CostGuard gates
-#           the deploy with a manual approval step for high-cost changes.
+#           the merge with a cost/budget review. Deploy requires
+#           manual approval via GitHub Environment.
 #
-# Pipeline: plan → cost review → manual approval → deploy
+# Pipeline:
+#   On PR:    plan → CostGuard cost review → Slack notification
+#   On merge: plan → manual approval → deploy
 #
 # Features:
 #   - Path-based triggers (only runs when relevant module changes)
+#   - CostGuard blocks merge when budget is exceeded (via branch protection)
 #   - GitHub Environment with required reviewers for production deploy
-#   - CostGuard outputs used for step summary and Slack notification
+#   - Job summary and optional Slack notification on cost review
 #
 # Secrets needed:
 #   COSTGUARD_API_KEY
@@ -23,6 +27,12 @@ name: "Platform: Infrastructure Deploy"
 
 on:
   pull_request:
+    branches: [main]
+    paths:
+      - "modules/**"
+      - "environments/production/**"
+      - "!**/*.md"
+  push:
     branches: [main]
     paths:
       - "modules/**"
@@ -73,10 +83,8 @@ jobs:
   cost-review:
     name: "CostGuard: Cost & Budget Review"
     needs: terraform-plan
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    outputs:
-      decision: ${{ steps.costguard.outputs.decision }}
-      monthly_cost: ${{ steps.costguard.outputs.monthly-cost }}
     steps:
       - name: Download Plan
         uses: actions/download-artifact@v4
@@ -116,8 +124,8 @@ jobs:
 
   deploy:
     name: "Terraform Apply"
-    needs: cost-review
-    if: needs.cost-review.outputs.decision != 'BLOCK'
+    needs: terraform-plan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production  # Requires manual approval via GitHub Environment
     defaults:
